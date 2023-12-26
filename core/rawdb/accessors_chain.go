@@ -718,16 +718,26 @@ type receiptLogs struct {
 
 // DecodeRLP implements rlp.Decoder.
 func (r *receiptLogs) DecodeRLP(s *rlp.Stream) error {
+	blob, err := s.Raw()
+	if err != nil {
+		return err
+	}
+
+	// First try to decode the latest receipt database format, try the pre-bedrock Optimism legacy format otherwise.
 	var stored storedReceiptRLP
-	if err := s.Decode(&stored); err == nil {
+	err = rlp.DecodeBytes(blob, &stored)
+	if err == nil {
 		r.Logs = stored.Logs
 		return nil
 	}
+
 	var storedLegacy legacyOptimismStoredReceiptRLP
-	if err := s.Decode(&storedLegacy); err != nil {
+	err = rlp.DecodeBytes(blob, &storedLegacy)
+	if err != nil {
 		return err
 	}
-	r.Logs = stored.Logs
+
+	r.Logs = storedLegacy.Logs
 	return nil
 }
 
