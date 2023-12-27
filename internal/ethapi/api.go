@@ -1430,21 +1430,18 @@ func RPCMarshalBlock(ctx context.Context, block *types.Block, inclTx bool, fullT
 	fields["size"] = hexutil.Uint64(block.Size())
 
 	if inclTx {
-		formatTx := func(tx *types.Transaction) (interface{}, error) {
-			return tx.Hash(), nil
+		formatTx := func(idx int, tx *types.Transaction) interface{} {
+			return tx.Hash()
 		}
 		if fullTx {
-			formatTx = func(tx *types.Transaction) (interface{}, error) {
-				return newRPCTransactionFromBlockHash(ctx, block, tx.Hash(), backend), nil
+			formatTx = func(idx int, tx *types.Transaction) interface{} {
+				return newRPCTransactionFromBlockIndex(ctx, block, uint64(idx), backend)
 			}
 		}
 		txs := block.Transactions()
 		transactions := make([]interface{}, len(txs))
-		var err error
 		for i, tx := range txs {
-			if transactions[i], err = formatTx(tx); err != nil {
-				return nil, err
-			}
+			transactions[i] = formatTx(i, tx)
 		}
 		fields["transactions"] = transactions
 	}
@@ -1625,16 +1622,6 @@ func newRPCRawTransactionFromBlockIndex(b *types.Block, index uint64) hexutil.By
 	}
 	blob, _ := txs[index].MarshalBinary()
 	return blob
-}
-
-// newRPCTransactionFromBlockHash returns a transaction that will serialize to the RPC representation.
-func newRPCTransactionFromBlockHash(ctx context.Context, b *types.Block, hash common.Hash, backend Backend) *RPCTransaction {
-	for idx, tx := range b.Transactions() {
-		if tx.Hash() == hash {
-			return newRPCTransactionFromBlockIndex(ctx, b, uint64(idx), backend)
-		}
-	}
-	return nil
 }
 
 // accessListResult returns an optional accesslist
