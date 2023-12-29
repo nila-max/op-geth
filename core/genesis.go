@@ -267,7 +267,8 @@ func (e *GenesisMismatchError) Error() string {
 
 // ChainOverrides contains the changes to chain config.
 type ChainOverrides struct {
-	OverrideShanghai *uint64
+	OverrideMantleBaseFee *big.Int
+	OverrideShanghai      *uint64
 	// optimism
 	OverrideOptimismBedrock  *big.Int
 	OverrideOptimismRegolith *uint64
@@ -305,6 +306,12 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *trie.Database, gen
 				// Apply Base Goerli regolith time
 				config.RegolithTime = &params.BaseGoerliRegolithTime
 			}
+
+			mantleUpgradeChainConfig := getUpgradeConfigForMantle(params.MantleSepoliaChainId)
+			if mantleUpgradeChainConfig != nil {
+				config.MantleBaseFeeBlock = mantleUpgradeChainConfig.MantleBaseFeeForSepolia
+			}
+
 			if overrides != nil && overrides.OverrideShanghai != nil {
 				config.ShanghaiTime = overrides.OverrideShanghai
 			}
