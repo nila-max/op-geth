@@ -307,9 +307,9 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *trie.Database, gen
 				config.RegolithTime = &params.BaseGoerliRegolithTime
 			}
 
-			mantleUpgradeChainConfig := getUpgradeConfigForMantle(params.MantleSepoliaChainId)
+			mantleUpgradeChainConfig := GetUpgradeConfigForMantle(config.ChainID)
 			if mantleUpgradeChainConfig != nil {
-				config.MantleBaseFeeBlock = mantleUpgradeChainConfig.MantleBaseFeeForSepolia
+				config.BaseFeeTime = mantleUpgradeChainConfig.BaseFeeTime
 			}
 
 			if overrides != nil && overrides.OverrideShanghai != nil {
