@@ -192,7 +192,7 @@ var DefaultConfig = Config{
 	Journal:   "transactions.rlp",
 	Rejournal: time.Hour,
 
-	PriceLimit: 1,
+	PriceLimit: 0,
 	PriceBump:  10,
 
 	AccountSlots: 16,
@@ -211,7 +211,7 @@ func (config *Config) sanitize() Config {
 		log.Warn("Sanitizing invalid txpool journal time", "provided", conf.Rejournal, "updated", time.Second)
 		conf.Rejournal = time.Second
 	}
-	if conf.PriceLimit < 1 {
+	if conf.PriceLimit < 0 {
 		log.Warn("Sanitizing invalid txpool price limit", "provided", conf.PriceLimit, "updated", DefaultConfig.PriceLimit)
 		conf.PriceLimit = DefaultConfig.PriceLimit
 	}
@@ -268,7 +268,7 @@ type TxPool struct {
 	pendingNonces *noncer        // Pending state tracking virtual nonces
 	currentMaxGas uint64         // Current gas limit for transaction caps
 
-	l1CostFn func(dataGas types.RollupGasData, isDepositTx bool) *big.Int // Current L1 fee cost function
+	l1CostFn func(dataGas types.RollupGasData, isDepositTx bool, to *common.Address) *big.Int // Current L1 fee cost function
 
 	locals  *accountSet // Set of local transaction to exempt from eviction rules
 	journal *journal    // Journal of local transaction to back up to disk
@@ -675,7 +675,7 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 		return ErrInvalidSender
 	}
 	// Drop non-local transactions under our own minimal accepted gas price or tip
-	if !local && tx.GasTipCapIntCmp(pool.gasPrice) < 0 {
+	if tx.GasTipCapIntCmp(pool.gasPrice) < 0 {
 		return ErrUnderpriced
 	}
 	// Ensure the transaction adheres to nonce ordering
@@ -685,7 +685,7 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 	// Transactor should have enough funds to cover the costs
 	// cost == V + GP * GL
 	cost := tx.Cost()
-	if l1Cost := pool.l1CostFn(tx.RollupDataGas(), tx.IsDepositTx()); l1Cost != nil { // add rollup cost
+	if l1Cost := pool.l1CostFn(tx.RollupDataGas(), tx.IsDepositTx(), tx.To()); l1Cost != nil { // add rollup cost
 		cost = cost.Add(cost, l1Cost)
 	}
 
@@ -729,7 +729,7 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 		if repl := list.txs.Get(tx.Nonce()); repl != nil {
 			// Deduct the cost of a transaction replaced by this
 			replL1Cost := repl.Cost()
-			if l1Cost := pool.l1CostFn(tx.RollupDataGas(), tx.IsDepositTx()); l1Cost != nil { // add rollup cost
+			if l1Cost := pool.l1CostFn(tx.RollupDataGas(), tx.IsDepositTx(), tx.To()); l1Cost != nil { // add rollup cost
 				replL1Cost = replL1Cost.Add(cost, l1Cost)
 			}
 			sum.Sub(sum, replL1Cost)
@@ -745,7 +745,7 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 	if err != nil {
 		return err
 	}
-	tokenRatio := pool.currentState.GetState(types.L1BlockAddr, types.TokenRatioSlot).Big().Uint64()
+	tokenRatio := pool.currentState.GetState(types.GasOracleAddr, types.TokenRatioSlot).Big().Uint64()
 
 	if tx.Gas() < intrGas*tokenRatio {
 		return core.ErrIntrinsicGas
@@ -1457,8 +1457,8 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	}
 
 	costFn := types.NewL1CostFunc(pool.chainconfig, statedb)
-	pool.l1CostFn = func(dataGas types.RollupGasData, isDepositTx bool) *big.Int {
-		return costFn(newHead.Number.Uint64(), newHead.Time, dataGas, isDepositTx)
+	pool.l1CostFn = func(dataGas types.RollupGasData, isDepositTx bool, to *common.Address) *big.Int {
+		return costFn(newHead.Number.Uint64(), newHead.Time, dataGas, isDepositTx, to)
 	}
 
 	// Inject any transactions discarded due to reorgs
@@ -1492,7 +1492,7 @@ func (pool *TxPool) validateMetaTxList(list *list) ([]*types.Transaction, *big.I
 			invalidMetaTxs = append(invalidMetaTxs, tx)
 		}
 		txGasCost := new(big.Int).Mul(tx.GasPrice(), new(big.Int).SetUint64(tx.Gas()))
-		l1Cost := pool.l1CostFn(tx.RollupDataGas(), tx.IsDepositTx())
+		l1Cost := pool.l1CostFn(tx.RollupDataGas(), tx.IsDepositTx(), tx.To())
 		if l1Cost != nil {
 			txGasCost = new(big.Int).Add(txGasCost, l1Cost) // gas fee sponsor must sponsor additional l1Cost fee
 		}
@@ -1538,7 +1538,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) []*types.Trans
 		if !list.Empty() {
 			// Reduce the cost-cap by L1 rollup cost of the first tx if necessary. Other txs will get filtered out afterwards.
 			el := list.txs.FirstElement()
-			if l1Cost := pool.l1CostFn(el.RollupDataGas(), el.IsDepositTx()); l1Cost != nil {
+			if l1Cost := pool.l1CostFn(el.RollupDataGas(), el.IsDepositTx(), el.To()); l1Cost != nil {
 				balance = new(big.Int).Sub(balance, l1Cost) // negative big int is fine
 			}
 		}
@@ -1751,7 +1751,7 @@ func (pool *TxPool) demoteUnexecutables() {
 		if !list.Empty() {
 			// Reduce the cost-cap by L1 rollup cost of the first tx if necessary. Other txs will get filtered out afterwards.
 			el := list.txs.FirstElement()
-			if l1Cost := pool.l1CostFn(el.RollupDataGas(), el.IsDepositTx()); l1Cost != nil {
+			if l1Cost := pool.l1CostFn(el.RollupDataGas(), el.IsDepositTx(), el.To()); l1Cost != nil {
 				balance = new(big.Int).Sub(balance, l1Cost) // negative big int is fine
 			}
 		}
